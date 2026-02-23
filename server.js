@@ -40,19 +40,15 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 
 /* ================= MONGODB ================= */
-if (!process.env.MONGODB_URI) {
-  console.error('❌ MONGODB_URI is missing in .env');
-  process.exit(1);
-}
+const mongoURI = process.env.MONGODB_URI;
 
 mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connected successfully'))
-  .catch((err) => {
-    console.error('❌ MongoDB connection failed');
-    console.error(err.message);
-    process.exit(1);
-  });
+  .connect(mongoURI, {
+    serverSelectionTimeoutMS: 10000,
+    family: 4 // 👈 forces IPv4 (fixes ECONNREFUSED)
+  })
+  .then(() => console.log("✅ MongoDB connected successfully"))
+  .catch(err => console.error("❌ MongoDB connection failed:", err.message));
   
 /* ================= SCHEMAS ================= */
 const Subscriber = mongoose.model(
