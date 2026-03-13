@@ -1,11 +1,11 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const bodyParser = require("body-parser");
 const nodemailer = require("nodemailer");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const fs = require("fs");
+const path = require("path");
 const generate80G = require("./utils/generate80G");
 require("dotenv").config();
 
@@ -13,21 +13,27 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 /* ================= MIDDLEWARE ================= */
+const allowedOrigins = [
+  "https://mindronfoundation.com",
+  "https://www.mindronfoundation.com",
+  "http://localhost:5173",
+];
+
 app.use(
   cors({
-    origin: [
-      "https://mindronfoundation.com",
-      "https://www.mindronfoundation.com",
-      "http://localhost:5173",
-    ],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS not allowed for this origin"));
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
 
 app.use(express.json({ limit: "10mb" }));
-app.use(bodyParser.json({ limit: "10mb" }));
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /* ================= MONGODB CONNECTION ================= */
 async function connectDB() {
@@ -53,60 +59,53 @@ async function connectDB() {
 connectDB();
 
 /* ================= SCHEMAS ================= */
-const Subscriber = mongoose.model(
-  "Subscriber",
-  new mongoose.Schema({
-    email: { type: String, required: true, unique: true },
-    subscribedAt: { type: Date, default: Date.now },
-  })
-);
+const subscriberSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true, trim: true },
+  subscribedAt: { type: Date, default: Date.now },
+});
 
-const Contact = mongoose.model(
-  "Contact",
-  new mongoose.Schema({
-    fullname: String,
-    email: String,
-    subject: String,
-    phone: String,
-    message: String,
-    sentAt: { type: Date, default: Date.now },
-  })
-);
+const contactSchema = new mongoose.Schema({
+  fullname: { type: String, trim: true },
+  email: { type: String, trim: true },
+  subject: { type: String, trim: true },
+  phone: { type: String, trim: true },
+  message: { type: String, trim: true },
+  sentAt: { type: Date, default: Date.now },
+});
 
-const Helpdesk = mongoose.model(
-  "Helpdesk",
-  new mongoose.Schema({
-    name: String,
-    phone: String,
-    email: String,
-    type: String,
-    orgName: String,
-    enquiry: String,
-    sentAt: { type: Date, default: Date.now },
-  })
-);
+const helpdeskSchema = new mongoose.Schema({
+  name: { type: String, trim: true },
+  phone: { type: String, trim: true },
+  email: { type: String, trim: true },
+  type: { type: String, trim: true },
+  orgName: { type: String, trim: true },
+  enquiry: { type: String, trim: true },
+  sentAt: { type: Date, default: Date.now },
+});
 
-const Donation = mongoose.model(
-  "Donation",
-  new mongoose.Schema({
-    fullName: String,
-    mobileNumber: String,
-    email: String,
-    address: String,
-    country: String,
-    pincode: String,
-    state: String,
-    city: String,
-    panNumber: String,
-    amount: Number,
-    termsAccepted: Boolean,
-    communicationConsent: Boolean,
-    razorpay_payment_id: String,
-    razorpay_order_id: String,
-    razorpay_signature: String,
-    paidAt: { type: Date, default: Date.now },
-  })
-);
+const donationSchema = new mongoose.Schema({
+  fullName: { type: String, trim: true },
+  mobileNumber: { type: String, trim: true },
+  email: { type: String, trim: true },
+  address: { type: String, trim: true },
+  country: { type: String, trim: true },
+  pincode: { type: String, trim: true },
+  state: { type: String, trim: true },
+  city: { type: String, trim: true },
+  panNumber: { type: String, trim: true },
+  amount: Number,
+  termsAccepted: Boolean,
+  communicationConsent: Boolean,
+  razorpay_payment_id: String,
+  razorpay_order_id: String,
+  razorpay_signature: String,
+  paidAt: { type: Date, default: Date.now },
+});
+
+const Subscriber = mongoose.model("Subscriber", subscriberSchema);
+const Contact = mongoose.model("Contact", contactSchema);
+const Helpdesk = mongoose.model("Helpdesk", helpdeskSchema);
+const Donation = mongoose.model("Donation", donationSchema);
 
 /* ================= EMAIL ================= */
 if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -135,14 +134,30 @@ const razorpay = new Razorpay({
 
 // Health check
 app.get("/", (req, res) => {
-  res.json({ status: "Backend running" });
+  res.status(200).json({
+    success: true,
+    message: "Mindron backend is running",
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ================= SUBSCRIBE =================
 app.post("/subscribe", async (req, res) => {
-  const { email } = req.body;
-
   try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
     await Subscriber.create({ email });
 
     await transporter.sendMail({
@@ -162,6 +177,7 @@ app.post("/subscribe", async (req, res) => {
     if (err.code === 11000) {
       return res.status(409).json({ error: "Email already subscribed" });
     }
+
     console.error("Subscribe error:", err.message);
     res.status(500).json({ error: "Server error" });
   }
@@ -169,9 +185,15 @@ app.post("/subscribe", async (req, res) => {
 
 // ================= CONTACT =================
 app.post("/contact", async (req, res) => {
-  const { fullname, email, subject, phone, message } = req.body;
-
   try {
+    const { fullname, email, subject, phone, message } = req.body;
+
+    if (!fullname || !email || !subject || !message) {
+      return res.status(400).json({
+        error: "Full name, email, subject and message are required",
+      });
+    }
+
     await Contact.create({ fullname, email, subject, phone, message });
 
     await transporter.sendMail({
@@ -182,12 +204,12 @@ app.post("/contact", async (req, res) => {
         <h3>New Contact Form Submission</h3>
         <p><b>Name:</b> ${fullname}</p>
         <p><b>Email:</b> ${email}</p>
-        <p><b>Phone:</b> ${phone}</p>
+        <p><b>Phone:</b> ${phone || "N/A"}</p>
         <p><b>Message:</b> ${message}</p>
       `,
     });
 
-    res.json({ message: "Message received successfully" });
+    res.status(200).json({ message: "Message received successfully" });
   } catch (err) {
     console.error("Contact error:", err.message);
     res.status(500).json({ error: "Server error" });
@@ -196,9 +218,15 @@ app.post("/contact", async (req, res) => {
 
 // ================= HELPDESK =================
 app.post("/helpdesk", async (req, res) => {
-  const { name, phone, email, type, orgName, enquiry } = req.body;
-
   try {
+    const { name, phone, email, type, orgName, enquiry } = req.body;
+
+    if (!name || !phone || !email || !type || !enquiry) {
+      return res.status(400).json({
+        error: "Name, phone, email, type and enquiry are required",
+      });
+    }
+
     await Helpdesk.create({ name, phone, email, type, orgName, enquiry });
 
     await transporter.sendMail({
@@ -211,12 +239,12 @@ app.post("/helpdesk", async (req, res) => {
         <p><b>Email:</b> ${email}</p>
         <p><b>Phone:</b> ${phone}</p>
         <p><b>Type:</b> ${type}</p>
-        <p><b>Organization:</b> ${orgName}</p>
+        <p><b>Organization:</b> ${orgName || "N/A"}</p>
         <p><b>Enquiry:</b> ${enquiry}</p>
       `,
     });
 
-    res.json({ message: "Helpdesk enquiry submitted" });
+    res.status(200).json({ message: "Helpdesk enquiry submitted" });
   } catch (err) {
     console.error("Helpdesk error:", err.message);
     res.status(500).json({ error: "Server error" });
@@ -226,13 +254,22 @@ app.post("/helpdesk", async (req, res) => {
 // ================= DONATION ORDER =================
 app.post("/donate/order", async (req, res) => {
   try {
+    const { amount } = req.body;
+
+    if (!amount || Number(amount) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid donation amount is required",
+      });
+    }
+
     const order = await razorpay.orders.create({
-      amount: Math.round(req.body.amount * 100),
+      amount: Math.round(Number(amount) * 100),
       currency: "INR",
-      receipt: "donation_" + Date.now(),
+      receipt: `donation_${Date.now()}`,
     });
 
-    res.json({ success: true, order });
+    res.status(200).json({ success: true, order });
   } catch (err) {
     console.error("Donation order error:", err.message);
     res.status(500).json({ success: false, message: "Order creation failed" });
@@ -241,36 +278,54 @@ app.post("/donate/order", async (req, res) => {
 
 // ================= DONATION VERIFY + 80G =================
 app.post("/donate/verify", async (req, res) => {
-  const {
-    fullName,
-    mobileNumber,
-    email,
-    address,
-    country,
-    pincode,
-    state,
-    city,
-    panNumber,
-    amount,
-    termsAccepted,
-    communicationConsent,
-    razorpay_payment_id,
-    razorpay_order_id,
-    razorpay_signature,
-  } = req.body;
-
-  const expectedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-    .digest("hex");
-
-  if (expectedSignature !== razorpay_signature) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid signature" });
-  }
+  let pdfPath = null;
 
   try {
+    const {
+      fullName,
+      mobileNumber,
+      email,
+      address,
+      country,
+      pincode,
+      state,
+      city,
+      panNumber,
+      amount,
+      termsAccepted,
+      communicationConsent,
+      razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_signature,
+    } = req.body;
+
+    if (
+      !fullName ||
+      !mobileNumber ||
+      !email ||
+      !amount ||
+      !razorpay_payment_id ||
+      !razorpay_order_id ||
+      !razorpay_signature
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required payment details",
+      });
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid signature",
+      });
+    }
+
     await Donation.create({
       fullName,
       mobileNumber,
@@ -289,13 +344,13 @@ app.post("/donate/verify", async (req, res) => {
       razorpay_signature,
     });
 
-    const is80GEligible = !!panNumber;
-    let attachments = [];
+    const is80GEligible = !!panNumber?.trim();
+    const attachments = [];
 
     if (is80GEligible) {
       const receiptNo = `MF80G-${Date.now()}`;
 
-      const pdfPath = await generate80G({
+      pdfPath = await generate80G({
         receiptNo,
         panNumber,
         fullName,
@@ -323,7 +378,7 @@ app.post("/donate/verify", async (req, res) => {
         <p>Thank you for your donation of Rs. ${amount}.</p>
         ${
           is80GEligible
-            ? "<p>Your <b>80G certificate</b> is attached.</p>"
+            ? "<p>Your <b>80G certificate</b> is attached with this email.</p>"
             : ""
         }
         <p>Regards,<br>Mindron Foundation</p>
@@ -331,15 +386,39 @@ app.post("/donate/verify", async (req, res) => {
       attachments,
     });
 
-    if (attachments.length && fs.existsSync(attachments[0].path)) {
-      fs.unlinkSync(attachments[0].path);
+    if (pdfPath && fs.existsSync(pdfPath)) {
+      fs.unlinkSync(pdfPath);
     }
 
-    res.json({ success: true, message: "Donation successful" });
+    res.status(200).json({
+      success: true,
+      message: "Donation successful",
+    });
   } catch (err) {
+    if (pdfPath && fs.existsSync(pdfPath)) {
+      fs.unlinkSync(pdfPath);
+    }
+
     console.error("Donation verify error:", err.message);
     res.status(500).json({ success: false, message: "Server error" });
   }
+});
+
+/* ================= 404 ROUTE ================= */
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
+});
+
+/* ================= GLOBAL ERROR HANDLER ================= */
+app.use((err, req, res, next) => {
+  console.error("Global error:", err.message);
+  res.status(500).json({
+    success: false,
+    message: err.message || "Internal server error",
+  });
 });
 
 /* ================= SERVER ================= */
