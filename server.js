@@ -5,18 +5,18 @@ const nodemailer = require("nodemailer");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
 const fs = require("fs");
-const path = require("path");
 const generate80G = require("./utils/generate80G");
 require("dotenv").config();
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 10000;
 
 /* ================= MIDDLEWARE ================= */
 const allowedOrigins = [
   "https://mindronfoundation.com",
   "https://www.mindronfoundation.com",
   "http://localhost:5173",
+  "http://127.0.0.1:5173",
 ];
 
 app.use(
@@ -25,12 +25,14 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      return callback(new Error("CORS not allowed for this origin"));
+      return callback(new Error(`CORS not allowed for this origin: ${origin}`));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
+
+app.options("*", cors());
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -108,10 +110,6 @@ const Helpdesk = mongoose.model("Helpdesk", helpdeskSchema);
 const Donation = mongoose.model("Donation", donationSchema);
 
 /* ================= EMAIL ================= */
-if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-  console.warn("⚠ EMAIL_USER or EMAIL_PASS missing");
-}
-
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -121,18 +119,12 @@ const transporter = nodemailer.createTransport({
 });
 
 /* ================= RAZORPAY ================= */
-if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-  console.warn("⚠ Razorpay keys missing");
-}
-
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 /* ================= ROUTES ================= */
-
-// Health check
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
@@ -149,7 +141,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ================= SUBSCRIBE =================
+/* ================= SUBSCRIBE ================= */
 app.post("/subscribe", async (req, res) => {
   try {
     const { email } = req.body;
@@ -178,12 +170,12 @@ app.post("/subscribe", async (req, res) => {
       return res.status(409).json({ error: "Email already subscribed" });
     }
 
-    console.error("Subscribe error:", err.message);
+    console.error("Subscribe error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// ================= CONTACT =================
+/* ================= CONTACT ================= */
 app.post("/contact", async (req, res) => {
   try {
     const { fullname, email, subject, phone, message } = req.body;
@@ -211,12 +203,12 @@ app.post("/contact", async (req, res) => {
 
     res.status(200).json({ message: "Message received successfully" });
   } catch (err) {
-    console.error("Contact error:", err.message);
+    console.error("Contact error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// ================= HELPDESK =================
+/* ================= HELPDESK ================= */
 app.post("/helpdesk", async (req, res) => {
   try {
     const { name, phone, email, type, orgName, enquiry } = req.body;
@@ -246,12 +238,12 @@ app.post("/helpdesk", async (req, res) => {
 
     res.status(200).json({ message: "Helpdesk enquiry submitted" });
   } catch (err) {
-    console.error("Helpdesk error:", err.message);
+    console.error("Helpdesk error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// ================= DONATION ORDER =================
+/* ================= DONATION ORDER ================= */
 app.post("/donate/order", async (req, res) => {
   try {
     const { amount } = req.body;
@@ -271,12 +263,12 @@ app.post("/donate/order", async (req, res) => {
 
     res.status(200).json({ success: true, order });
   } catch (err) {
-    console.error("Donation order error:", err.message);
+    console.error("Donation order error:", err);
     res.status(500).json({ success: false, message: "Order creation failed" });
   }
 });
 
-// ================= DONATION VERIFY + 80G =================
+/* ================= DONATION VERIFY ================= */
 app.post("/donate/verify", async (req, res) => {
   let pdfPath = null;
 
@@ -399,12 +391,12 @@ app.post("/donate/verify", async (req, res) => {
       fs.unlinkSync(pdfPath);
     }
 
-    console.error("Donation verify error:", err.message);
+    console.error("Donation verify error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-/* ================= 404 ROUTE ================= */
+/* ================= 404 ================= */
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -414,14 +406,13 @@ app.use((req, res) => {
 
 /* ================= GLOBAL ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
-  console.error("Global error:", err.message);
+  console.error("Global error:", err);
   res.status(500).json({
     success: false,
     message: err.message || "Internal server error",
   });
 });
 
-/* ================= SERVER ================= */
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
 });
