@@ -21,7 +21,7 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: function (origin, callback) {
+    origin(origin, callback) {
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -32,10 +32,18 @@ app.use(
   })
 );
 
-app.options("*", cors());
+app.options(/.*/, cors());
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+/* ================= DEBUG ENV CHECK ================= */
+console.log("PORT:", port);
+console.log("MONGODB_URI exists:", !!process.env.MONGODB_URI);
+console.log("EMAIL_USER exists:", !!process.env.EMAIL_USER);
+console.log("EMAIL_PASS exists:", !!process.env.EMAIL_PASS);
+console.log("RAZORPAY_KEY_ID exists:", !!process.env.RAZORPAY_KEY_ID);
+console.log("RAZORPAY_KEY_SECRET exists:", !!process.env.RAZORPAY_KEY_SECRET);
 
 /* ================= MONGODB CONNECTION ================= */
 async function connectDB() {
@@ -118,11 +126,19 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-/* ================= RAZORPAY ================= */
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+/* ================= HELPERS ================= */
+function getRazorpayInstance() {
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    throw new Error(
+      "Razorpay keys are missing. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Render."
+    );
+  }
+
+  return new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+}
 
 /* ================= ROUTES ================= */
 app.get("/", (req, res) => {
@@ -255,6 +271,8 @@ app.post("/donate/order", async (req, res) => {
       });
     }
 
+    const razorpay = getRazorpayInstance();
+
     const order = await razorpay.orders.create({
       amount: Math.round(Number(amount) * 100),
       currency: "INR",
@@ -264,7 +282,10 @@ app.post("/donate/order", async (req, res) => {
     res.status(200).json({ success: true, order });
   } catch (err) {
     console.error("Donation order error:", err);
-    res.status(500).json({ success: false, message: "Order creation failed" });
+    res.status(500).json({
+      success: false,
+      message: err.message || "Order creation failed",
+    });
   }
 });
 
@@ -303,6 +324,13 @@ app.post("/donate/verify", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Missing required payment details",
+      });
+    }
+
+    if (!process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: "RAZORPAY_KEY_SECRET missing in server environment",
       });
     }
 
@@ -392,7 +420,10 @@ app.post("/donate/verify", async (req, res) => {
     }
 
     console.error("Donation verify error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({
+      success: false,
+      message: err.message || "Server error",
+    });
   }
 });
 
